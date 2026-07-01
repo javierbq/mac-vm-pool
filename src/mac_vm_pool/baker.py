@@ -7,7 +7,12 @@ from mac_vm_pool.config import Config
 BUILD_VM = "golden-build"
 SSH_OPTS = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
 
-def bake_golden_image(cfg: Config, runner=subprocess.run) -> dict:
+
+def _launch_detached(args):
+    subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detached) -> dict:
     tart = cfg.tart_bin
     agent = os.path.expanduser(cfg.guest_agent_binary)
     key = os.path.expanduser(cfg.ssh_key_path)
@@ -22,8 +27,7 @@ def bake_golden_image(cfg: Config, runner=subprocess.run) -> dict:
     # 1. fresh build VM from base
     sh([tart, "delete", BUILD_VM], check=False)
     sh([tart, "clone", cfg.base_image, BUILD_VM])
-    subprocess.Popen([tart, "run", BUILD_VM], stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, start_new_session=True)
+    launcher([tart, "run", BUILD_VM])
 
     # 2. wait for IP
     ip = ""
@@ -33,14 +37,16 @@ def bake_golden_image(cfg: Config, runner=subprocess.run) -> dict:
         if ip:
             break
         time.sleep(3)
+    if not ip:
+        raise RuntimeError("golden-build VM did not acquire an IP after boot")
 
     # 3. copy + swap the modified guest agent, reload launchd
     sh(["sshpass", "-p", "admin", "scp", *SSH_OPTS, agent, f"admin@{ip}:/tmp/tga-new"])
     ssh("chmod +x /tmp/tga-new", ip)
     ssh("UID_NUM=$(id -u); P=/Library/LaunchAgents/org.cirruslabs.tart-guest-agent.plist; "
         "launchctl bootout gui/$UID_NUM $P; T=$(readlink -f /opt/homebrew/bin/tart-guest-agent); "
-        "echo admin | sudo -S rm -f $T; echo admin | sudo -S cp /tmp/tga-new $T; "
-        "echo admin | sudo -S chmod +x $T; launchctl bootstrap gui/$UID_NUM $P", ip)
+        "echo admin | sudo -S rm -f \"$T\"; echo admin | sudo -S cp /tmp/tga-new \"$T\"; "
+        "echo admin | sudo -S chmod +x \"$T\"; launchctl bootstrap gui/$UID_NUM $P", ip)
 
     # 4. grant TCC (SIP off in cirruslabs images)
     ssh('DB="/Library/Application Support/com.apple.TCC/TCC.db"; T=$(readlink -f /opt/homebrew/bin/tart-guest-agent); '
@@ -50,13 +56,10 @@ def bake_golden_image(cfg: Config, runner=subprocess.run) -> dict:
         'VALUES (\\"$SVC\\",\\"$T\\",1,2,4,1,NULL,0,$(date +%s));"; done; '
         'echo admin | sudo -S killall tccd', ip)
 
-    # 5. install the baked SSH public key
-    try:
-        with open(pub) as fh:
-            pubkey = fh.read().strip()
-        ssh(f'mkdir -p ~/.ssh && echo "{pubkey}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', ip)
-    except FileNotFoundError:
-        pass
+    # 5. install the baked SSH public key (missing key is a hard error)
+    with open(pub) as fh:
+        pubkey = fh.read().strip()
+    ssh(f'mkdir -p ~/.ssh && echo "{pubkey}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', ip)
 
     # 6. smoke test: type + query AX via the built tart CLI on the host
     smoke_ok = True
