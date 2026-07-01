@@ -72,13 +72,22 @@ def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detac
         'VALUES (\\"$SVC\\",\\"$T\\",1,2,4,1,NULL,0,$(date +%s));"; done; '
         'echo admin | sudo -S killall tccd', ip)
 
+    # 4b. reload the agent AFTER the TCC grant so the running agent becomes
+    # trusted — otherwise the agent started in step 3 predates the grant and
+    # the smoke test's accessibility query fails (false negative). The grant is
+    # already committed to TCC.db, so VMs cloned from the golden image start
+    # trusted regardless; this reload is what makes the bake-time smoke honest.
+    ssh("UID_NUM=$(id -u); P=/Library/LaunchAgents/org.cirruslabs.tart-guest-agent.plist; "
+        "launchctl bootout gui/$UID_NUM $P 2>/dev/null; launchctl bootstrap gui/$UID_NUM $P", ip)
+
     # 5. install the baked SSH public key (missing key is a hard error)
     with open(pub) as fh:
         pubkey = fh.read().strip()
     ssh(f'mkdir -p ~/.ssh && echo "{pubkey}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', ip)
 
-    # 6. smoke test: type + query AX via the built tart CLI on the host
-    sh(["open", "-a", "TextEdit"], check=False)
+    # 6. smoke test: open an app IN THE GUEST, type into it, and query the
+    # accessibility tree — all via the guest agent RPC (tart exec/input/accessibility).
+    sh([cfg.tart_bin, "exec", BUILD_VM, "open", "-a", "TextEdit"], check=False)
     input_result = sh([cfg.tart_bin, "input", "type", BUILD_VM, "smoke"], check=False)
     ax_result = sh([cfg.tart_bin, "accessibility", "find", BUILD_VM, "--role", "AXApplication", "--max-results", "1"], check=False)
     smoke_ok = (input_result.returncode == 0 and ax_result.returncode == 0)
