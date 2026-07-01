@@ -40,6 +40,22 @@ def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detac
     if not ip:
         raise RuntimeError("golden-build VM did not acquire an IP after boot")
 
+    # 2b. wait for sshd to accept connections — an IP appears before the guest's
+    # SSH service is ready, so proceeding straight to scp races and fails (255).
+    ssh_ready = False
+    for _ in range(60):
+        probe = runner(
+            ["sshpass", "-p", "admin", "ssh", *SSH_OPTS, "-o", "ConnectTimeout=5",
+             f"admin@{ip}", "true"],
+            capture_output=True, text=True, check=False,
+        )
+        if probe.returncode == 0:
+            ssh_ready = True
+            break
+        time.sleep(5)
+    if not ssh_ready:
+        raise RuntimeError(f"sshd on {ip} not reachable after boot")
+
     # 3. copy + swap the modified guest agent, reload launchd
     sh(["sshpass", "-p", "admin", "scp", *SSH_OPTS, agent, f"admin@{ip}:/tmp/tga-new"])
     ssh("chmod +x /tmp/tga-new", ip)
