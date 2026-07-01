@@ -63,3 +63,13 @@ class LeasePool:
                 lease = self._leases.pop(lid)
                 self.host.delete(lease.vm_name)
             return expired
+
+    def reconcile(self) -> list[str]:
+        with self._lock:
+            live = {l.vm_name for l in self._leases.values()}
+            deleted = []
+            for name in self.host.running():
+                if name.startswith("pool-") and name not in live:
+                    self.host.delete(name)
+                    deleted.append(name)
+            return deleted

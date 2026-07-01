@@ -45,3 +45,14 @@ def test_reap_expired_lease():
     reaped = pool.reap()
     assert lease.lease_id in reaped
     assert vm not in host.running()
+
+def test_reconcile_destroys_orphans_only():
+    pool, host = make_pool()
+    lease = pool.acquire("a")               # tracked pool VM
+    host.clone("g", "pool-orphan"); host.boot("pool-orphan")  # crash orphan
+    host.clone("g", "user-vm"); host.boot("user-vm")          # unrelated VM
+    deleted = pool.reconcile()
+    assert "pool-orphan" in deleted
+    assert lease.vm_name not in deleted     # tracked lease survives
+    assert "user-vm" not in deleted         # non-pool VM untouched
+    assert "user-vm" in host.running()
