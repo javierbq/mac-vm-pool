@@ -52,5 +52,14 @@ def test_bake_runs_expected_stages_in_order(tmp_path):
     assert "kTCCServiceScreenCapture" in all_tcc
     assert "kTCCServicePostEvent" in all_tcc
 
+    # Fix 2 (smoke): smoke_ok must be True in the happy path (runner returns returncode=0)
+    assert result["smoke_ok"] is True
+
+    # Fix 2 (smoke): both input type and accessibility find commands must appear
+    assert any(f"{cfg.tart_bin} input type {baker.BUILD_VM}" in c for c in joined), \
+        "input type command missing from call sequence"
+    assert any(f"{cfg.tart_bin} accessibility find {baker.BUILD_VM}" in c for c in joined), \
+        "accessibility find command missing from call sequence"
+
     # ends on a tart op
     assert joined[-1].startswith(f"{cfg.tart_bin} ")

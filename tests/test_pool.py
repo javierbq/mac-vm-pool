@@ -46,6 +46,13 @@ def test_reap_expired_lease():
     assert lease.lease_id in reaped
     assert vm not in host.running()
 
+def test_acquire_honors_zero_ttl():
+    # clock returns constant 1000.0; ttl=0 means expires_at == created_at
+    pool, _ = make_pool()
+    lease = pool.acquire("a", ttl=0)
+    assert lease is not None
+    assert lease.expires_at == lease.created_at
+
 def test_reconcile_destroys_orphans_only():
     pool, host = make_pool()
     lease = pool.acquire("a")               # tracked pool VM

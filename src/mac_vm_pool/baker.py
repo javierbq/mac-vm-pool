@@ -62,12 +62,10 @@ def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detac
     ssh(f'mkdir -p ~/.ssh && echo "{pubkey}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', ip)
 
     # 6. smoke test: type + query AX via the built tart CLI on the host
-    smoke_ok = True
-    try:
-        sh([tart, "exec", BUILD_VM, "open", "-a", "TextEdit"], check=False)
-        sh([cfg.tart_bin, "input", "type", BUILD_VM, "smoke"], check=False)
-    except Exception:
-        smoke_ok = False
+    sh(["open", "-a", "TextEdit"], check=False)
+    input_result = sh([cfg.tart_bin, "input", "type", BUILD_VM, "smoke"], check=False)
+    ax_result = sh([cfg.tart_bin, "accessibility", "find", BUILD_VM, "--role", "AXApplication", "--max-results", "1"], check=False)
+    smoke_ok = (input_result.returncode == 0 and ax_result.returncode == 0)
 
     # 7. shutdown + commit as golden image
     sh([tart, "stop", BUILD_VM], check=False)

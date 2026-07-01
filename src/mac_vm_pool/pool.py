@@ -21,7 +21,7 @@ class LeasePool:
                 return None
             name = self._namegen()
             now = self.clock()
-            ttl = ttl or self.cfg.lease_ttl
+            ttl = self.cfg.lease_ttl if ttl is None else ttl
             expires_at = self.clock() + ttl
             self.host.clone(self.cfg.golden_image, name)
             self.host.boot(name)
