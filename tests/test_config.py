@@ -13,3 +13,15 @@ def test_env_override(monkeypatch):
     monkeypatch.setenv("MVP_MAX_VMS_PER_HOST", "1")
     cfg = Config.load(None)
     assert cfg.max_vms_per_host == 1
+
+def test_env_override_zero(monkeypatch):
+    monkeypatch.setenv("MVP_MAX_VMS_PER_HOST", "0")
+    cfg = Config.load(None)
+    assert cfg.max_vms_per_host == 0
+
+def test_toml_load(tmp_path):
+    toml_file = tmp_path / "config.toml"
+    toml_file.write_text('max_vms_per_host = 1\ngolden_image = "custom"\n')
+    cfg = Config.load(str(toml_file))
+    assert cfg.max_vms_per_host == 1
+    assert cfg.golden_image == "custom"

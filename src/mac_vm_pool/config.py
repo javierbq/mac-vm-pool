@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import tomllib
 from dataclasses import dataclass, fields
+from typing import get_type_hints
 
 @dataclass
 class Config:
@@ -17,15 +18,18 @@ class Config:
 
     @classmethod
     def load(cls, path: str | None) -> "Config":
-        data: dict = {}
-        if path and os.path.exists(os.path.expanduser(path)):
-            with open(os.path.expanduser(path), "rb") as fh:
-                data = tomllib.load(fh)
+        data: dict[str, object] = {}
+        if path:
+            expanded = os.path.expanduser(path)
+            if os.path.exists(expanded):
+                with open(expanded, "rb") as fh:
+                    data = tomllib.load(fh)
+        hints = get_type_hints(cls)
         kwargs = {}
         for f in fields(cls):
             env = os.environ.get(f"MVP_{f.name.upper()}")
-            if env is not None:
-                kwargs[f.name] = f.type == "int" and int(env) or (int(env) if f.type is int else env)
-            elif f.name in data:
-                kwargs[f.name] = data[f.name]
+            raw = env if env is not None else data.get(f.name)
+            if raw is None:
+                continue
+            kwargs[f.name] = int(raw) if hints[f.name] is int and not isinstance(raw, int) else raw
         return cls(**kwargs)
