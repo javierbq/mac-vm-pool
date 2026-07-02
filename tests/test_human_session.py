@@ -7,15 +7,21 @@ def _ok(stdout="", rc=0):
     return m
 
 
-def test_deploy_app_mkdirs_then_scps():
+def test_deploy_app_is_idempotent_and_preserves_symlinks():
     calls = []
     def runner(args, **kw):
         calls.append(args); return _ok()
     hs.deploy_app("10.0.0.5", "/k/key", "/tmp/MyApp.app", runner=runner)
-    joined = [" ".join(a) for a in calls]
-    assert any("mkdir -p ~/Apps" in c for c in joined)
-    assert any(c.startswith("scp ") and "MyApp.app" in c and "admin@10.0.0.5:~/Apps/" in c
-               for c in joined)
+    # clears any prior copy (idempotent) then mkdir, over ssh
+    assert any(a[0] == "ssh" and "rm -rf ~/Apps/MyApp.app" in a[-1] and "mkdir -p ~/Apps" in a[-1]
+               for a in calls)
+    # streams the bundle via tar (preserves symlinks) — NOT scp -r
+    sh_calls = [a for a in calls if a[:2] == ["sh", "-c"]]
+    assert sh_calls, "expected a tar-over-ssh pipeline"
+    script = sh_calls[0][2]
+    assert "tar -cf - -C" in script and "tar -xf - -C ~/Apps" in script
+    assert "MyApp.app" in script
+    assert "scp" not in script
 
 
 def test_launch_app_opens_absolute_path():
@@ -24,6 +30,14 @@ def test_launch_app_opens_absolute_path():
         calls.append(args); return _ok()
     hs.launch_app("pool-1", "MyApp.app", "/bin/tart", runner=runner)
     assert calls[0] == ["/bin/tart", "exec", "pool-1", "open", "/Users/admin/Apps/MyApp.app"]
+
+
+def test_launch_bundle_opens_by_bundle_id():
+    calls = []
+    def runner(args, **kw):
+        calls.append(args); return _ok()
+    hs.launch_bundle("pool-1", "com.example.App", "/bin/tart", runner=runner)
+    assert calls[0] == ["/bin/tart", "exec", "pool-1", "open", "-b", "com.example.App"]
 
 
 def test_enable_screen_sharing_runs_kickstart_and_returns_password():
@@ -117,3 +131,17 @@ def test_monitor_run_invokes_on_close():
     m.run()
     assert m.outcome == "never_connected"
     assert closed == [True]
+
+
+def test_monitor_stop_exits_and_skips_on_close():
+    closed = []
+    m = hs.HumanSessionMonitor(
+        probe=lambda: True,      # would otherwise stay connected forever
+        on_close=lambda: closed.append(True),
+        grace_seconds=30, connect_timeout=100, poll_interval=1,
+        clock=_seq_clock([0.0, 0.0, 0.0, 0.0]), sleep=lambda s: None,
+    )
+    m.stop()                     # external release signals the monitor
+    m.run()
+    assert m.outcome == "stopped"
+    assert closed == []          # on_close NOT called when stopped externally
