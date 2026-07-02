@@ -2,6 +2,7 @@ from mac_vm_pool.config import Config
 from mac_vm_pool.host import FakeHost
 from mac_vm_pool.pool import LeasePool
 from mac_vm_pool import server
+from mac_vm_pool import human_session
 
 def make_injected_server():
     cfg = Config.load(None)
@@ -28,3 +29,53 @@ def test_list_pool_reports_free_capacity():
     listing = svc.list_pool()
     assert listing["capacity_free"] == 1
     assert len(listing["leases"]) == 1
+
+def test_start_human_session_orchestrates(monkeypatch):
+    svc = make_injected_server()
+    lid = svc.acquire_vm("a")["lease_id"]
+    ip = svc.vm_status(lid)["ip"]
+    vm_name = svc.vm_status(lid)["vm_name"]
+    calls = {}
+    monkeypatch.setattr(human_session, "deploy_app",
+                        lambda *a, **k: calls.__setitem__("deploy", a))
+    monkeypatch.setattr(human_session, "launch_app",
+                        lambda *a, **k: calls.__setitem__("launch", a))
+    monkeypatch.setattr(human_session, "enable_screen_sharing",
+                        lambda *a, **k: "pw012345")
+    monkeypatch.setattr(human_session, "open_screen_sharing",
+                        lambda *a, **k: calls.__setitem__("open", a))
+
+    started = {}
+
+    class FakeMonitor:
+        def __init__(self, *a, **k):
+            started["kwargs"] = k
+        def start(self):
+            started["started"] = True
+
+    monkeypatch.setattr(human_session, "HumanSessionMonitor", FakeMonitor)
+
+    out = svc.start_human_session(lid, app_path="/tmp/MyApp.app")
+    assert out == {"vnc_url": f"vnc://:pw012345@{ip}",
+                   "vm_name": vm_name, "ip": ip, "monitoring": True}
+    assert "deploy" in calls and "launch" in calls and "open" in calls
+    assert started["started"] is True
+
+def test_start_human_session_skips_deploy_without_app(monkeypatch):
+    svc = make_injected_server()
+    lid = svc.acquire_vm("a")["lease_id"]
+    calls = {}
+    monkeypatch.setattr(human_session, "deploy_app",
+                        lambda *a, **k: calls.__setitem__("deploy", True))
+    monkeypatch.setattr(human_session, "enable_screen_sharing",
+                        lambda *a, **k: "pw012345")
+    monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
+    monkeypatch.setattr(human_session, "HumanSessionMonitor",
+                        lambda *a, **k: type("M", (), {"start": lambda self: None})())
+    out = svc.start_human_session(lid)
+    assert out["monitoring"] is True
+    assert "deploy" not in calls
+
+def test_start_human_session_unknown_lease():
+    svc = make_injected_server()
+    assert svc.start_human_session("nope") == {"found": False}
