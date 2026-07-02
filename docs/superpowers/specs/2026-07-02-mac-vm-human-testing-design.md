@@ -246,9 +246,20 @@ human closes Screen Sharing → probe false for grace_seconds
   (destroys orphan `pool-*` VMs). Any one of these reclaims a VM.
 - **Grace + reconnect reset** — transient Screen Sharing drops don't destroy the
   session.
-- **Partial-failure in `start_human_session`** — if `deploy_app`/`launch_app`/
-  `enable_screen_sharing` fails, return the error and leave the lease intact so
-  the caller can retry or `release_vm`; do not start the monitor on failure.
+- **Partial-failure in `start_human_session`** — setup (`deploy_app`/`launch_app`/
+  `launch_bundle`/`enable_screen_sharing`/`open_screen_sharing`) runs inside a
+  `try/except`. On any failure the lease is **released** and the error re-raised —
+  because no reaper is wired to reclaim it, leaving the lease would leak a scarce
+  VM slot with no monitor to free it. The caller re-acquires and retries. The
+  monitor is only created after setup succeeds.
+- **Monitor lifecycle** — `release_vm` stops (`monitor.stop()`) and forgets the
+  session monitor, so an explicit release doesn't leave an orphaned thread
+  SSHing into a deleted guest; the monitor also removes itself on auto-close. The
+  `_monitors` registry is guarded by a lock (FastMCP serves requests on multiple
+  threads).
+- **App transfer** — the `.app` is streamed with `tar` over SSH (not `scp -r`,
+  which dereferences the bundle's internal symlinks and breaks its code
+  signature), and the guest target is cleared first so a re-deploy is idempotent.
 
 ## Security considerations
 
@@ -313,3 +324,13 @@ assert the VM auto-releases within grace + poll interval.
   than instantly. Acceptable; documented.
 - **`kickstart` path/flags across macOS versions** — pinned to the cirruslabs
   Sequoia base; re-verify if the base image bumps.
+- **`acquire` holds the pool lock across `wait_ip` + `wait_agent`** (deferred,
+  low severity) — a slow boot can hold the `RLock` for up to ~2×
+  `acquire_wait_timeout`, blocking `status`/`release`/`extend`/`list_pool`. This
+  is a pre-existing pattern (`wait_ip` was already under the lock); the safe fix
+  (reserve the slot under the lock, do the blocking boot outside it, finalize
+  under the lock) is a non-trivial refactor of the cap-enforcement path and is
+  left for a follow-up rather than risked here.
+- **No graceful monitor join on server shutdown** (low) — monitors are daemon
+  threads and `reconcile()` cleans orphans on startup, so a mid-flight teardown
+  interrupted by process exit is recovered next start rather than instantly.
