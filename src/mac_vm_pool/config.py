@@ -15,6 +15,10 @@ class Config:
     base_image: str = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
     lease_ttl: int = 1800
     acquire_wait_timeout: int = 300
+    human_session_grace_seconds: int = 30
+    human_session_connect_timeout: int = 600
+    human_session_ttl: int = 14400
+    vnc_port: int = 5900
 
     @classmethod
     def load(cls, path: str | None) -> "Config":
