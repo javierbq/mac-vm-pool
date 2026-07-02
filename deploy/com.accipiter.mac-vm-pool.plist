@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.accipiter.mac-vm-pool</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/jcastellanos/repos/mac-vm-pool/.venv/bin/python</string>
+    <string>-m</string>
+    <string>mac_vm_pool.server</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>MVP_TART_BIN</key><string>/Users/jcastellanos/repos/tart/.build/debug/tart</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/mac-vm-pool.out.log</string>
+  <key>StandardErrorPath</key><string>/tmp/mac-vm-pool.err.log</string>
+</dict>
+</plist>
