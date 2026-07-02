@@ -26,6 +26,7 @@ class LeasePool:
             self.host.clone(self.cfg.golden_image, name)
             self.host.boot(name)
             ip = self.host.wait_ip(name, timeout=self.cfg.acquire_wait_timeout)
+            self.host.wait_agent(name, timeout=self.cfg.acquire_wait_timeout)
             lease = Lease(
                 lease_id=uuid.uuid4().hex,
                 vm_name=name,
