@@ -70,6 +70,13 @@ def test_acquire_honors_zero_ttl():
     assert lease is not None
     assert lease.expires_at == lease.created_at
 
+def test_extend_bumps_expires_at():
+    pool, _ = make_pool(clock_values=[1000.0, 1000.0, 5000.0])
+    lease = pool.acquire("a", ttl=10)
+    assert pool.extend(lease.lease_id, ttl=100) is True
+    assert lease.expires_at == 5100.0            # 5000 (extend clock) + 100
+    assert pool.extend("nope", ttl=100) is False
+
 def test_reconcile_destroys_orphans_only():
     pool, host = make_pool()
     lease = pool.acquire("a")               # tracked pool VM

@@ -52,6 +52,14 @@ class LeasePool:
         with self._lock:
             return self._leases.get(lease_id)
 
+    def extend(self, lease_id: str, ttl: int) -> bool:
+        with self._lock:
+            lease = self._leases.get(lease_id)
+            if lease is None:
+                return False
+            lease.expires_at = self.clock() + ttl
+            return True
+
     def leases(self) -> list[Lease]:
         with self._lock:
             return list(self._leases.values())
