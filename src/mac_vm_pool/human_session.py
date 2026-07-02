@@ -2,6 +2,8 @@ from __future__ import annotations
 import os
 import secrets
 import subprocess
+import threading
+import time
 
 SSH_OPTS = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
 KICKSTART = ("/System/Library/CoreServices/RemoteManagement/"
@@ -52,3 +54,46 @@ def vnc_connection_probe(ip: str, ssh_key: str, vnc_port: int = 5900,
     cmd = f"netstat -an -p tcp | grep '\\.{vnc_port} ' | grep ESTABLISHED"
     r = _ssh(ip, os.path.expanduser(ssh_key), cmd, runner)
     return r.returncode == 0 and bool(r.stdout.strip())
+
+
+class HumanSessionMonitor(threading.Thread):
+    """Watch a guest's VNC connection; call on_close() when the human's Screen
+    Sharing session ends (disconnect held for grace_seconds) or never starts
+    (connect_timeout). Refresh the lease via keepalive() while connected."""
+
+    def __init__(self, probe, on_close, *, grace_seconds, connect_timeout,
+                 poll_interval=3.0, keepalive=None,
+                 clock=time.monotonic, sleep=time.sleep):
+        super().__init__(daemon=True)
+        self._probe = probe
+        self._on_close = on_close
+        self._keepalive = keepalive or (lambda: None)
+        self._grace = grace_seconds
+        self._connect_timeout = connect_timeout
+        self._poll = poll_interval
+        self._clock = clock
+        self._sleep = sleep
+        self.outcome = None
+
+    def run(self):
+        self.outcome = self._loop()
+        self._on_close()
+
+    def _loop(self):
+        # Phase 1: wait for the first connection.
+        start = self._clock()
+        while not self._probe():
+            if self._clock() - start >= self._connect_timeout:
+                return "never_connected"
+            self._sleep(self._poll)
+        # Phase 2: wait for a disconnect held past the grace window.
+        disconnected_since = None
+        while True:
+            if self._probe():
+                self._keepalive()
+                disconnected_since = None
+            elif disconnected_since is None:
+                disconnected_since = self._clock()
+            elif self._clock() - disconnected_since >= self._grace:
+                return "closed"
+            self._sleep(self._poll)

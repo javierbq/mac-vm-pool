@@ -62,3 +62,58 @@ def test_vnc_connection_probe_false_when_no_connection():
     def runner(args, **kw):
         return _ok(stdout="", rc=1)
     assert hs.vnc_connection_probe("10.0.0.5", "/k/key", runner=runner) is False
+
+
+def _seq_clock(values):
+    it = iter(values)
+    return lambda: next(it)
+
+
+def test_monitor_never_connected():
+    m = hs.HumanSessionMonitor(
+        probe=lambda: False,
+        on_close=lambda: None,
+        grace_seconds=30, connect_timeout=10, poll_interval=1,
+        clock=_seq_clock([0.0, 0.0, 5.0, 11.0]), sleep=lambda s: None,
+    )
+    assert m._loop() == "never_connected"
+
+
+def test_monitor_closes_after_disconnect_grace():
+    probes = iter([True, False, False])
+    m = hs.HumanSessionMonitor(
+        probe=lambda: next(probes),
+        on_close=lambda: None,
+        grace_seconds=30, connect_timeout=100, poll_interval=1,
+        clock=_seq_clock([0.0, 0.0, 100.0, 200.0]),
+        sleep=lambda s: None,
+    )
+    assert m._loop() == "closed"
+
+
+def test_monitor_reconnect_resets_grace_and_keepalives():
+    probes = iter([True, False, True, False, False])
+    kept = []
+    m = hs.HumanSessionMonitor(
+        probe=lambda: next(probes),
+        on_close=lambda: None,
+        grace_seconds=30, connect_timeout=100, poll_interval=1,
+        keepalive=lambda: kept.append(True),
+        clock=_seq_clock([0.0, 5.0, 50.0, 100.0]),
+        sleep=lambda s: None,
+    )
+    assert m._loop() == "closed"
+    assert len(kept) == 1     # keepalive fired on the reconnect probe
+
+
+def test_monitor_run_invokes_on_close():
+    closed = []
+    m = hs.HumanSessionMonitor(
+        probe=lambda: False,
+        on_close=lambda: closed.append(True),
+        grace_seconds=1, connect_timeout=0, poll_interval=1,
+        clock=_seq_clock([0.0, 0.0, 1.0]), sleep=lambda s: None,
+    )
+    m.run()
+    assert m.outcome == "never_connected"
+    assert closed == [True]
