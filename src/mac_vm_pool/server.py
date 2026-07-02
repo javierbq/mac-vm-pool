@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import threading
 from mac_vm_pool.config import Config
 from mac_vm_pool.local_host import LocalHost
 from mac_vm_pool.pool import LeasePool
@@ -12,6 +13,7 @@ class PoolService:
         self.pool = pool
         self.cfg = cfg or Config.load(None)
         self._monitors: dict = {}
+        self._monitors_lock = threading.Lock()
 
     def acquire_vm(self, client_id: str, ttl_seconds: int = 1800) -> dict:
         lease = self.pool.acquire(client_id, ttl=ttl_seconds)
@@ -20,6 +22,10 @@ class PoolService:
         return lease.to_dict()
 
     def release_vm(self, lease_id: str) -> dict:
+        with self._monitors_lock:
+            monitor = self._monitors.pop(lease_id, None)
+        if monitor is not None:
+            monitor.stop()
         return {"released": self.pool.release(lease_id)}
 
     def vm_status(self, lease_id: str) -> dict:
@@ -45,12 +51,22 @@ class PoolService:
         if lease is None:
             return {"found": False}
         key = self.cfg.ssh_key_path
-        if app_path:
-            human_session.deploy_app(lease.ip, key, app_path)
-            human_session.launch_app(lease.vm_name, os.path.basename(app_path),
-                                     self.cfg.tart_bin)
-        password = human_session.enable_screen_sharing(lease.ip, key)
-        human_session.open_screen_sharing(lease.ip, password)
+        try:
+            if app_path:
+                human_session.deploy_app(lease.ip, key, app_path)
+                human_session.launch_app(lease.vm_name,
+                                         os.path.basename(app_path.rstrip("/")),
+                                         self.cfg.tart_bin)
+            elif bundle_id:
+                human_session.launch_bundle(lease.vm_name, bundle_id, self.cfg.tart_bin)
+            password = human_session.enable_screen_sharing(lease.ip, key)
+            human_session.open_screen_sharing(lease.ip, password)
+        except Exception:
+            # Setup failed. No reaper is wired, so a lease left behind here would
+            # leak a scarce VM slot with no monitor to release it — free it now
+            # and let the error surface so the caller can re-acquire and retry.
+            self.release_vm(lease_id)
+            raise
         self.pool.extend(lease_id, self.cfg.human_session_ttl)
         monitor = human_session.HumanSessionMonitor(
             probe=lambda: human_session.vnc_connection_probe(
@@ -60,8 +76,9 @@ class PoolService:
             connect_timeout=self.cfg.human_session_connect_timeout,
             keepalive=lambda: self.pool.extend(lease_id, self.cfg.human_session_ttl),
         )
+        with self._monitors_lock:
+            self._monitors[lease_id] = monitor
         monitor.start()
-        self._monitors[lease_id] = monitor
         return {"vnc_url": f"vnc://:{password}@{lease.ip}",
                 "vm_name": lease.vm_name, "ip": lease.ip, "monitoring": True}
 
