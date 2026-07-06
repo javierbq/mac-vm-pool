@@ -112,19 +112,25 @@ Call `mcp__mac-vm-pool__start_human_session` with:
 
 The pool then:
 1. installs + launches the app in the guest,
-2. enables Screen Sharing in the guest for this lease (throwaway VNC password;
-   no golden-image change),
-3. opens **macOS Screen Sharing** on the host focused on the VM,
-4. starts a monitor that **auto-destroys the VM when you close the Screen
-   Sharing window** (after a short grace period).
+2. opens **macOS Screen Sharing** on the host to `vnc://admin:admin@<ip>` using
+   **account auth** (Screen Sharing is enabled with account access in the golden
+   image at bake time — there is no per-session guest reconfiguration).
 
-It returns `{ "vnc_url", "vm_name", "ip", "monitoring": true }`. Tell the human
-the app is up in the Screen Sharing window and they can drive it directly —
-copy/paste and drag-and-drop work natively over Screen Sharing.
+It returns `{ "vnc_url", "vm_name", "ip", "monitoring": true, "teardown": … }`.
+Tell the human the app is up in the Screen Sharing window and they can drive it
+directly — copy/paste and drag-and-drop work natively over Screen Sharing. If a
+window doesn't appear, run `open "<vnc_url>"` from the return value.
+
+Requires a golden image baked with Screen Sharing enabled (`provision_golden_image`
+/ the baker does this). If Screen Sharing was baked before this was added,
+re-bake once.
 
 ### 3. Teardown
-Closing the Screen Sharing window tears the VM down automatically. To tear down
-immediately instead, call `mcp__mac-vm-pool__release_vm` with the `lease_id`.
+Teardown is **primarily explicit**: call `mcp__mac-vm-pool__release_vm` with the
+`lease_id` when done. As a backstop, the monitor auto-releases the VM once a
+**sustained** Screen Sharing session ends (window closed, held past a grace
+period). A failed hand-off does **not** destroy the VM — it's kept so you can
+SSH in and inspect or retry.
 While the human is connected, the lease is kept alive so it is never reaped
 mid-session.
 

@@ -1,8 +1,35 @@
 # mac-vm human testing + pool-service consolidation — Design Spec
 
 **Date:** 2026-07-02
-**Status:** Proposed design, pending user review
+**Status:** Implemented; revised 2026-07-06 after live testing
 **Extends:** [`2026-07-01-mac-vm-pool-design.md`](2026-07-01-mac-vm-pool-design.md)
+
+## Revision 2026-07-06 — Screen Sharing hand-off redesign (supersedes the Screen Sharing details below)
+
+Live testing showed the original hand-off was unusable, for reasons that were
+integration-level (not unit-testable). This revision supersedes the
+`enable_screen_sharing` / legacy-VNC-password / auto-teardown-on-close details in
+the component and data-flow sections below:
+
+- **Auth (was broken):** the original per-session `enable_screen_sharing` set a
+  *legacy VNC password* (`-setvnclegacy -setvncpw`) and returned `vnc://:<pw>@ip`.
+  Modern macOS Screen Sharing negotiates **account auth** and rejects that →
+  "Authentication failed." **Fix:** enable Screen Sharing with **account access**
+  for `admin` **once at bake time** (in `baker.py`); `start_human_session` now
+  just opens `vnc://admin:admin@ip`. `enable_screen_sharing` is removed.
+- **No per-session guest reconfiguration:** the per-session `kickstart -restart
+  -agent` destabilized live VMs' networking/SSH. Moving Screen Sharing to bake
+  time removes it from the session path entirely. **Requires a one-time re-bake.**
+- **Teardown:** the monitor's connection probe (an ESTABLISHED `:5900` socket)
+  couldn't tell a real session from a failed-auth handshake, so a failed connect
+  looked like connect→disconnect and reclaimed the VM ~grace seconds later.
+  **Fix:** teardown is now **primarily explicit** (`release_vm`); the monitor is a
+  backstop that requires a connection sustained across
+  `human_session_connect_confirmations` (default 2) polls before it can arm, and
+  a failed hand-off **keeps** the VM (does not release) for inspection/retry.
+- **New config:** `human_session_connect_confirmations` (2), `vnc_user`
+  ("admin"), `vnc_password` ("admin"). `start_human_session` return adds
+  `teardown`.
 
 ## Purpose
 
