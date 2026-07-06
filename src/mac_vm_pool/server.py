@@ -43,30 +43,26 @@ class PoolService:
 
     def start_human_session(self, lease_id: str, app_path: str | None = None,
                             bundle_id: str | None = None) -> dict:
-        """Prepare a leased VM for hands-on human testing: install+launch the
-        app (if given), enable Screen Sharing in the guest, open a Screen
-        Sharing window on the host, and start a monitor that releases the VM
-        when the human's session closes."""
+        """Prepare a leased VM for hands-on human testing: install+launch the app
+        (if given), then open macOS Screen Sharing to it using account auth.
+        Screen Sharing is enabled in the golden image at bake time, so there is
+        NO per-session guest reconfiguration here. Teardown is primarily explicit
+        (release_vm); the returned monitor is a backstop that auto-releases only
+        after a sustained session ends. On setup failure the VM is KEPT (not
+        released) so you can SSH in and inspect or retry."""
         lease = self.pool.status(lease_id)
         if lease is None:
             return {"found": False}
         key = self.cfg.ssh_key_path
-        try:
-            if app_path:
-                human_session.deploy_app(lease.ip, key, app_path)
-                human_session.launch_app(lease.vm_name,
-                                         os.path.basename(app_path.rstrip("/")),
-                                         self.cfg.tart_bin)
-            elif bundle_id:
-                human_session.launch_bundle(lease.vm_name, bundle_id, self.cfg.tart_bin)
-            password = human_session.enable_screen_sharing(lease.ip, key)
-            human_session.open_screen_sharing(lease.ip, password)
-        except Exception:
-            # Setup failed. No reaper is wired, so a lease left behind here would
-            # leak a scarce VM slot with no monitor to release it — free it now
-            # and let the error surface so the caller can re-acquire and retry.
-            self.release_vm(lease_id)
-            raise
+        if app_path:
+            human_session.deploy_app(lease.ip, key, app_path)
+            human_session.launch_app(lease.vm_name,
+                                     os.path.basename(app_path.rstrip("/")),
+                                     self.cfg.tart_bin)
+        elif bundle_id:
+            human_session.launch_bundle(lease.vm_name, bundle_id, self.cfg.tart_bin)
+        vnc_url = f"vnc://{self.cfg.vnc_user}:{self.cfg.vnc_password}@{lease.ip}"
+        human_session.open_screen_sharing(lease.ip, self.cfg.vnc_user, self.cfg.vnc_password)
         self.pool.extend(lease_id, self.cfg.human_session_ttl)
         monitor = human_session.HumanSessionMonitor(
             probe=lambda: human_session.vnc_connection_probe(
@@ -74,13 +70,16 @@ class PoolService:
             on_close=lambda: self.release_vm(lease_id),
             grace_seconds=self.cfg.human_session_grace_seconds,
             connect_timeout=self.cfg.human_session_connect_timeout,
+            connect_confirmations=self.cfg.human_session_connect_confirmations,
             keepalive=lambda: self.pool.extend(lease_id, self.cfg.human_session_ttl),
         )
         with self._monitors_lock:
             self._monitors[lease_id] = monitor
         monitor.start()
-        return {"vnc_url": f"vnc://:{password}@{lease.ip}",
-                "vm_name": lease.vm_name, "ip": lease.ip, "monitoring": True}
+        return {"vnc_url": vnc_url, "vm_name": lease.vm_name, "ip": lease.ip,
+                "monitoring": True,
+                "teardown": "explicit release_vm; auto-release only after a "
+                            "sustained session ends"}
 
 def build_pool(cfg: Config) -> LeasePool:
     pool = LeasePool(LocalHost(cfg), cfg)
