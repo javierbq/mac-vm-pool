@@ -32,6 +32,46 @@ VM-tested macOS app functional testing (via the tart input/accessibility RPCs).
 4. Bake the golden image: `python -c "from mac_vm_pool.config import Config; from mac_vm_pool.baker import bake_golden_image; print(bake_golden_image(Config.load(None)))"`
 5. Run the server: `python -m mac_vm_pool.server`
 
+## Running the pool service (MCP)
+
+The pool is a **long-running MCP server** (FastMCP, streamable-http) that holds
+the lease table in memory and enforces the 2-VM cap across all agents. The
+`mac-vm-test` skill drives VM lifecycle **through this server** — it must be
+running.
+
+- Foreground (dev):
+  ```sh
+  MVP_TART_BIN=~/repos/tart/.build/debug/tart python -m mac_vm_pool.server
+  # → Uvicorn running on http://127.0.0.1:8000  (MCP endpoint: /mcp)
+  ```
+- Keep it running (LaunchAgent): edit the paths in
+  `deploy/com.accipiter.mac-vm-pool.plist`, then:
+  ```sh
+  cp deploy/com.accipiter.mac-vm-pool.plist ~/Library/LaunchAgents/
+  launchctl load ~/Library/LaunchAgents/com.accipiter.mac-vm-pool.plist
+  ```
+- Register with Claude Code (once):
+  ```sh
+  claude mcp add --transport http --scope user mac-vm-pool http://127.0.0.1:8000/mcp
+  claude mcp list        # mac-vm-pool should connect once the server is up
+  ```
+
+### MCP tools
+- `acquire_vm(client_id, ttl_seconds=1800)` → lease handle (`lease_id`, `vm_name`, `ip`) or `{queued, reason}` at cap.
+- `release_vm(lease_id)` → destroy the VM.
+- `vm_status(lease_id)` / `list_pool()` → introspection.
+- `provision_golden_image()` → (re)bake the golden image.
+- `start_human_session(lease_id, app_path=None, bundle_id=None)` → **hands the VM
+  to a human**: installs+launches `app_path` (if given), enables Screen Sharing in
+  the guest per-session (via `kickstart`, throwaway VNC password — no golden-image
+  re-bake), opens `vnc://` on the host, and starts a background monitor that
+  **auto-releases the VM when the Screen Sharing session closes** (after
+  `human_session_grace_seconds`). The lease is kept alive while connected, so a
+  long manual session is never reaped. Returns `{vnc_url, vm_name, ip, monitoring}`.
+  Human-session knobs (env-overridable via `MVP_*`): `human_session_grace_seconds`
+  (30), `human_session_connect_timeout` (600), `human_session_ttl` (14400),
+  `vnc_port` (5900).
+
 ## Test
 - Unit: `pytest -m "not integration"`
 - Integration (needs a Mac + a baked `mac-test-golden` image):

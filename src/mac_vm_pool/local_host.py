@@ -27,13 +27,26 @@ class LocalHost:
     def clone(self, src: str, name: str) -> None:
         self._run("clone", src, name)
 
-    def boot(self, name: str) -> None:
-        # tart run is long-running; detach it.
+    def boot(self, name: str, graphics: bool = False) -> None:
+        # tart run is long-running; detach it. Headless by default — the pool
+        # drives via RPC and human sessions use Screen Sharing, so the built-in
+        # window is never needed.
+        args = [self.tart, "run", name]
+        if not graphics:
+            args.append("--no-graphics")
         subprocess.Popen(
-            [self.tart, "run", name],
+            args,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
+
+    def wait_agent(self, name: str, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._run("exec", name, "true", check=False).returncode == 0:
+                return
+            time.sleep(5)
+        raise TimeoutError(f"guest agent RPC on {name} did not answer within {timeout}s")
 
     def wait_ip(self, name: str, timeout: float) -> str:
         deadline = time.monotonic() + timeout

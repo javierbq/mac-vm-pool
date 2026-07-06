@@ -21,3 +21,15 @@ def test_capacity_reports_free_slots():
     assert h.capacity() == 1            # 2 - 1 running
     h.clone("g", "b"); h.boot("b")
     assert h.capacity() == 0
+
+def test_fakehost_wait_agent_is_noop():
+    h = FakeHost()
+    h.clone("g", "pool-x")
+    h.boot("pool-x")
+    assert h.wait_agent("pool-x", timeout=1) is None
+
+def test_fakehost_boot_accepts_graphics_kwarg():
+    h = FakeHost()
+    h.clone("g", "pool-x")
+    h.boot("pool-x", graphics=True)
+    assert "pool-x" in h.running()

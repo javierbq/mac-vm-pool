@@ -9,6 +9,13 @@ def test_defaults_match_spec():
     assert cfg.base_image == "ghcr.io/cirruslabs/macos-sequoia-base:latest"
     assert cfg.lease_ttl == 1800
 
+def test_human_session_defaults():
+    cfg = Config.load(None)
+    assert cfg.human_session_grace_seconds == 30
+    assert cfg.human_session_connect_timeout == 600
+    assert cfg.human_session_ttl == 14400
+    assert cfg.vnc_port == 5900
+
 def test_env_override(monkeypatch):
     monkeypatch.setenv("MVP_MAX_VMS_PER_HOST", "1")
     cfg = Config.load(None)

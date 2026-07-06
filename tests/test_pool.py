@@ -23,6 +23,23 @@ def test_acquire_returns_leased_vm_with_ip():
     assert lease.ip.startswith("10.0.0.")
     assert lease.vm_name in host.running()
 
+def test_acquire_waits_for_agent_after_ip():
+    cfg = Config.load(None)
+    order = []
+
+    class SpyHost(FakeHost):
+        def wait_ip(self, name, timeout):
+            order.append("wait_ip")
+            return super().wait_ip(name, timeout)
+
+        def wait_agent(self, name, timeout):
+            order.append("wait_agent")
+
+    pool = LeasePool(SpyHost(capacity_limit=2), cfg, namegen=lambda: "pool-1")
+    lease = pool.acquire("a")
+    assert lease is not None
+    assert order == ["wait_ip", "wait_agent"]
+
 def test_cap_blocks_third_acquire():
     pool, _ = make_pool()
     assert pool.acquire("a") is not None
@@ -52,6 +69,13 @@ def test_acquire_honors_zero_ttl():
     lease = pool.acquire("a", ttl=0)
     assert lease is not None
     assert lease.expires_at == lease.created_at
+
+def test_extend_bumps_expires_at():
+    pool, _ = make_pool(clock_values=[1000.0, 1000.0, 5000.0])
+    lease = pool.acquire("a", ttl=10)
+    assert pool.extend(lease.lease_id, ttl=100) is True
+    assert lease.expires_at == 5100.0            # 5000 (extend clock) + 100
+    assert pool.extend("nope", ttl=100) is False
 
 def test_reconcile_destroys_orphans_only():
     pool, host = make_pool()

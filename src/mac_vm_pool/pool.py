@@ -26,6 +26,7 @@ class LeasePool:
             self.host.clone(self.cfg.golden_image, name)
             self.host.boot(name)
             ip = self.host.wait_ip(name, timeout=self.cfg.acquire_wait_timeout)
+            self.host.wait_agent(name, timeout=self.cfg.acquire_wait_timeout)
             lease = Lease(
                 lease_id=uuid.uuid4().hex,
                 vm_name=name,
@@ -50,6 +51,14 @@ class LeasePool:
     def status(self, lease_id: str) -> Lease | None:
         with self._lock:
             return self._leases.get(lease_id)
+
+    def extend(self, lease_id: str, ttl: int) -> bool:
+        with self._lock:
+            lease = self._leases.get(lease_id)
+            if lease is None:
+                return False
+            lease.expires_at = self.clock() + ttl
+            return True
 
     def leases(self) -> list[Lease]:
         with self._lock:
