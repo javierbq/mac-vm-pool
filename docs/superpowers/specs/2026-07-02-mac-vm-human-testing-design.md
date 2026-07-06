@@ -1,10 +1,38 @@
 # mac-vm human testing + pool-service consolidation — Design Spec
 
 **Date:** 2026-07-02
-**Status:** Implemented; revised 2026-07-06 after live testing
+**Status:** Implemented; pivoted to the built-in tart window on 2026-07-06 (see Revision 2)
 **Extends:** [`2026-07-01-mac-vm-pool-design.md`](2026-07-01-mac-vm-pool-design.md)
 
-## Revision 2026-07-06 — Screen Sharing hand-off redesign (supersedes the Screen Sharing details below)
+## Revision 2 (2026-07-06) — pivot to tart's built-in window (supersedes ALL Screen Sharing below)
+
+Screen Sharing never worked in this host↔guest setup: both legacy-VNC-password
+auth and account auth were rejected at the macOS handshake (host macOS 26 ↔ guest
+15.7.7) even with a valid password and `screensharingd` listening. Rather than
+keep fighting guest Screen Sharing auth, the human transport is now **tart's
+built-in UI window**, which needs **zero guest configuration** — the hypervisor
+renders a native window on the host and injects real mouse/keyboard. Verified
+working end-to-end. This supersedes the entire Screen Sharing design (Revision 1
+and the component/data-flow sections below):
+
+- **Transport:** `acquire_vm(display="window")` boots the VM with tart's built-in
+  window (`tart run` without `--no-graphics`); `Lease` carries `display`. The
+  window appears on this Mac at boot. Agentic flow stays headless (default).
+- **`start_human_session`:** installs+launches the app into the window-mode VM.
+  No `open vnc://`, no guest auth, no `open_screen_sharing`/`vnc_connection_probe`
+  (both removed). Requires `display == "window"` (guarded). Returns
+  `{vm_name, ip, window, monitoring, teardown}` (no `vnc_url`).
+- **Teardown:** closing the window stops the VM; the monitor's probe becomes
+  "is the VM still running?" (`vm_name in host.running()`), so window-close flips
+  it False and releases the lease. Explicit `release_vm` remains primary; a failed
+  hand-off keeps the VM.
+- **No golden-image changes:** the built-in window needs nothing baked, so the
+  baker's Screen Sharing step was reverted and `vnc_user`/`vnc_password`/`vnc_port`
+  config removed. No re-bake required.
+- **Tradeoff:** loses Screen Sharing niceties (drag-and-drop, remote-from-another-
+  Mac); clipboard still works via the guest agent. Best for testing on this Mac.
+
+## Revision 1 (2026-07-06) — Screen Sharing hand-off redesign (SUPERSEDED by Revision 2)
 
 Live testing showed the original hand-off was unusable, for reasons that were
 integration-level (not unit-testable). This revision supersedes the

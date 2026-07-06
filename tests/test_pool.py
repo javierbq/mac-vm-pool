@@ -40,6 +40,25 @@ def test_acquire_waits_for_agent_after_ip():
     assert lease is not None
     assert order == ["wait_ip", "wait_agent"]
 
+def test_acquire_headless_by_default():
+    pool, _ = make_pool()
+    lease = pool.acquire("a")
+    assert lease.display == "headless"
+
+def test_acquire_windowed_boots_graphics_and_sets_display():
+    cfg = Config.load(None)
+    seen = {}
+
+    class SpyHost(FakeHost):
+        def boot(self, name, graphics=False):
+            seen["graphics"] = graphics
+            return super().boot(name, graphics=graphics)
+
+    pool = LeasePool(SpyHost(capacity_limit=2), cfg, namegen=lambda: "pool-1")
+    lease = pool.acquire("a", graphics=True)
+    assert seen["graphics"] is True
+    assert lease.display == "window"
+
 def test_cap_blocks_third_acquire():
     pool, _ = make_pool()
     assert pool.acquire("a") is not None

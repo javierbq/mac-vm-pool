@@ -46,31 +46,18 @@ def launch_bundle(vm_name: str, bundle_id: str, tart_bin: str, runner=subprocess
     )
 
 
-def open_screen_sharing(ip: str, user: str, password: str, opener=subprocess.run) -> None:
-    # Account auth (macOS Screen Sharing's default). Screen Sharing is enabled
-    # with account access at bake time, so there is NO per-session guest
-    # reconfiguration here — that (kickstart -restart -agent) was destabilizing
-    # live VMs, and legacy VNC-password auth was rejected by the host.
-    opener(["open", f"vnc://{user}:{password}@{ip}"], check=False)
-
-
-def vnc_connection_probe(ip: str, ssh_key: str, vnc_port: int = 5900,
-                         runner=subprocess.run) -> bool:
-    cmd = f"netstat -an -p tcp | grep '\\.{vnc_port} ' | grep ESTABLISHED"
-    r = _ssh(ip, os.path.expanduser(ssh_key), cmd, runner)
-    return r.returncode == 0 and bool(r.stdout.strip())
-
-
 class HumanSessionMonitor(threading.Thread):
-    """Backstop teardown for a manual session. Explicit release_vm is the primary
-    path; this thread only auto-releases when a SUSTAINED, real Screen Sharing
-    session ends (disconnect held for grace_seconds), or if nobody ever connects
-    (connect_timeout). It refreshes the lease via keepalive() while connected.
+    """Backstop teardown for a manual session, driven by a generic `probe()`.
+    Explicit release_vm is the primary path; this thread only auto-releases when
+    a SUSTAINED session ends (probe False held for grace_seconds), or if the
+    session never becomes active (connect_timeout). It refreshes the lease via
+    keepalive() while the session is live.
 
-    A connection must be observed on `connect_confirmations` consecutive polls
-    before it counts as "connected" — a single-poll blip (e.g. an auth handshake
-    that immediately fails, or a transient TCP probe) must not arm teardown, which
-    was reclaiming VMs ~grace seconds after every failed connection attempt."""
+    For the built-in-window transport the probe is "is the VM still running?" —
+    the tart window IS the session, so closing it stops the VM and the probe goes
+    False, releasing the lease. `connect_confirmations` consecutive True polls are
+    required before teardown can arm, so a transient probe blip can't reclaim a
+    live VM."""
 
     def __init__(self, probe, on_close, *, grace_seconds, connect_timeout,
                  poll_interval=3.0, keepalive=None, connect_confirmations=2,

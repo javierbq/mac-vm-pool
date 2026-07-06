@@ -44,11 +44,9 @@ def test_bake_runs_expected_stages_in_order(tmp_path):
     # Fix 1: SSH pubkey was baked into authorized_keys
     assert any("authorized_keys" in c for c in joined), "authorized_keys command missing"
 
-    # Screen Sharing (Remote Management) enabled with ACCOUNT auth for admin,
-    # and NOT the legacy VNC-password mode the host rejects.
-    assert any("kickstart" in c and "-users admin" in c for c in joined), \
-        "Screen Sharing not enabled with account access at bake time"
-    assert not any("setvncpw" in c for c in joined), "must not bake legacy VNC password auth"
+    # Human testing uses tart's built-in window (no guest Screen Sharing) — the
+    # baker must NOT configure Remote Management / VNC.
+    assert not any("kickstart" in c for c in joined), "baker should not enable Remote Management"
 
     # Fix 5: TCC grant issues INSERT INTO access and covers all three services
     tcc_cmds = [c for c in joined if "INSERT" in c and "INTO access" in c]

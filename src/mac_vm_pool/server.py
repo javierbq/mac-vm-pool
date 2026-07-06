@@ -15,8 +15,13 @@ class PoolService:
         self._monitors: dict = {}
         self._monitors_lock = threading.Lock()
 
-    def acquire_vm(self, client_id: str, ttl_seconds: int = 1800) -> dict:
-        lease = self.pool.acquire(client_id, ttl=ttl_seconds)
+    def acquire_vm(self, client_id: str, ttl_seconds: int = 1800,
+                   display: str = "headless") -> dict:
+        """Lease a fresh VM. display='headless' (default) boots for agentic/RPC
+        driving; display='window' boots with tart's built-in UI window for
+        hands-on human testing (then call start_human_session)."""
+        lease = self.pool.acquire(client_id, ttl=ttl_seconds,
+                                  graphics=(display == "window"))
         if lease is None:
             return {"queued": True, "reason": "cap_reached"}
         return lease.to_dict()
@@ -43,16 +48,20 @@ class PoolService:
 
     def start_human_session(self, lease_id: str, app_path: str | None = None,
                             bundle_id: str | None = None) -> dict:
-        """Prepare a leased VM for hands-on human testing: install+launch the app
-        (if given), then open macOS Screen Sharing to it using account auth.
-        Screen Sharing is enabled in the golden image at bake time, so there is
-        NO per-session guest reconfiguration here. Teardown is primarily explicit
-        (release_vm); the returned monitor is a backstop that auto-releases only
-        after a sustained session ends. On setup failure the VM is KEPT (not
-        released) so you can SSH in and inspect or retry."""
+        """Prepare a window-mode leased VM for hands-on human testing: install +
+        launch the app (if given) into the VM whose tart window is already on
+        screen. No guest Screen Sharing / VNC / auth is involved — the hypervisor
+        renders the window and injects real mouse/keyboard.
+
+        The VM must have been acquired with display='window'. Teardown: closing
+        the window stops the VM and the backstop monitor releases the lease; or
+        call release_vm explicitly. On setup failure the VM is KEPT (not released)
+        so you can SSH in and inspect or retry."""
         lease = self.pool.status(lease_id)
         if lease is None:
             return {"found": False}
+        if lease.display != "window":
+            return {"error": "acquire the VM with display='window' for a human session"}
         key = self.cfg.ssh_key_path
         if app_path:
             human_session.deploy_app(lease.ip, key, app_path)
@@ -61,12 +70,12 @@ class PoolService:
                                      self.cfg.tart_bin)
         elif bundle_id:
             human_session.launch_bundle(lease.vm_name, bundle_id, self.cfg.tart_bin)
-        vnc_url = f"vnc://{self.cfg.vnc_user}:{self.cfg.vnc_password}@{lease.ip}"
-        human_session.open_screen_sharing(lease.ip, self.cfg.vnc_user, self.cfg.vnc_password)
         self.pool.extend(lease_id, self.cfg.human_session_ttl)
+        vm_name = lease.vm_name
         monitor = human_session.HumanSessionMonitor(
-            probe=lambda: human_session.vnc_connection_probe(
-                lease.ip, key, self.cfg.vnc_port),
+            # "session live" == the windowed VM is still running; closing the
+            # window stops it, which flips this False and releases the lease.
+            probe=lambda: vm_name in self.pool.host.running(),
             on_close=lambda: self.release_vm(lease_id),
             grace_seconds=self.cfg.human_session_grace_seconds,
             connect_timeout=self.cfg.human_session_connect_timeout,
@@ -76,10 +85,9 @@ class PoolService:
         with self._monitors_lock:
             self._monitors[lease_id] = monitor
         monitor.start()
-        return {"vnc_url": vnc_url, "vm_name": lease.vm_name, "ip": lease.ip,
+        return {"vm_name": vm_name, "ip": lease.ip, "window": True,
                 "monitoring": True,
-                "teardown": "explicit release_vm; auto-release only after a "
-                            "sustained session ends"}
+                "teardown": "close the VM window (auto-releases) or call release_vm"}
 
 def build_pool(cfg: Config) -> LeasePool:
     pool = LeasePool(LocalHost(cfg), cfg)

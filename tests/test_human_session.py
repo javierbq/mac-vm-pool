@@ -40,28 +40,6 @@ def test_launch_bundle_opens_by_bundle_id():
     assert calls[0] == ["/bin/tart", "exec", "pool-1", "open", "-b", "com.example.App"]
 
 
-def test_open_screen_sharing_uses_account_auth_url():
-    # Account auth (default macOS Screen Sharing), not the legacy password-only
-    # form the host rejects.
-    calls = []
-    def opener(args, **kw):
-        calls.append(args); return _ok()
-    hs.open_screen_sharing("10.0.0.5", "admin", "admin", opener=opener)
-    assert calls[0] == ["open", "vnc://admin:admin@10.0.0.5"]
-
-
-def test_vnc_connection_probe_true_when_established():
-    def runner(args, **kw):
-        return _ok(stdout="tcp4  0 0 10.0.0.5.5900 10.0.0.1.51000 ESTABLISHED\n", rc=0)
-    assert hs.vnc_connection_probe("10.0.0.5", "/k/key", runner=runner) is True
-
-
-def test_vnc_connection_probe_false_when_no_connection():
-    def runner(args, **kw):
-        return _ok(stdout="", rc=1)
-    assert hs.vnc_connection_probe("10.0.0.5", "/k/key", runner=runner) is False
-
-
 def _seq_clock(values):
     it = iter(values)
     return lambda: next(it)
