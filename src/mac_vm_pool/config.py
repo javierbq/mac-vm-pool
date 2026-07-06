@@ -19,9 +19,6 @@ class Config:
     human_session_connect_timeout: int = 600
     human_session_connect_confirmations: int = 2
     human_session_ttl: int = 14400
-    vnc_port: int = 5900
-    vnc_user: str = "admin"
-    vnc_password: str = "admin"
 
     @classmethod
     def load(cls, path: str | None) -> "Config":

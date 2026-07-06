@@ -10,6 +10,7 @@ class Lease:
     ip: str | None
     created_at: float
     expires_at: float
+    display: str = "headless"   # headless (agentic/RPC) | window (human, built-in UI)
 
     def to_dict(self) -> dict:
         return asdict(self)

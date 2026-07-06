@@ -57,27 +57,24 @@ running.
   ```
 
 ### MCP tools
-- `acquire_vm(client_id, ttl_seconds=1800)` → lease handle (`lease_id`, `vm_name`, `ip`) or `{queued, reason}` at cap.
+- `acquire_vm(client_id, ttl_seconds=1800, display="headless")` → lease handle
+  (`lease_id`, `vm_name`, `ip`, `display`) or `{queued, reason}` at cap.
+  `display="window"` boots with tart's built-in UI window for human testing.
 - `release_vm(lease_id)` → destroy the VM.
 - `vm_status(lease_id)` / `list_pool()` → introspection.
 - `provision_golden_image()` → (re)bake the golden image.
-- `start_human_session(lease_id, app_path=None, bundle_id=None)` → **hands the VM
-  to a human**: installs+launches `app_path` (if given), then opens **macOS Screen
-  Sharing** to `vnc://admin:admin@<ip>` using **account auth**. Screen Sharing is
-  enabled with account access in the golden image **at bake time**, so there is no
-  per-session guest reconfiguration (per-session `kickstart -restart -agent` was
-  destabilizing live VMs, and legacy VNC-password auth was rejected by the host).
-  Teardown is **primarily explicit** (`release_vm`); a background monitor is a
-  backstop that auto-releases only after a **sustained** session ends
-  (`human_session_connect_confirmations` polls to confirm a real connection, then
-  a `human_session_grace_seconds` disconnect window). A failed hand-off **keeps**
-  the VM for inspection. The lease is kept alive while connected. Returns
-  `{vnc_url, vm_name, ip, monitoring, teardown}`. Requires re-baking the golden
-  image after adding this (for the baked Screen Sharing). Human-session knobs
-  (env-overridable via `MVP_*`): `human_session_grace_seconds` (30),
-  `human_session_connect_timeout` (600), `human_session_connect_confirmations`
-  (2), `human_session_ttl` (14400), `vnc_port` (5900), `vnc_user`/`vnc_password`
-  (admin/admin).
+- `start_human_session(lease_id, app_path=None, bundle_id=None)` → **hands a
+  window-mode VM to a human**: installs+launches `app_path` (or launches
+  `bundle_id`) into the VM whose **built-in tart window** is already on screen.
+  No guest Screen Sharing / VNC / auth — the hypervisor renders the window and
+  injects real mouse/keyboard (needs no golden-image changes). The VM must have
+  been acquired with `display="window"`. Teardown: **closing the window** stops
+  the VM and the backstop monitor releases the lease; or call `release_vm`. A
+  failed hand-off **keeps** the VM for inspection. The lease is kept alive while
+  the window is open. Returns `{vm_name, ip, window, monitoring, teardown}`.
+  Human-session knobs (env-overridable via `MVP_*`): `human_session_grace_seconds`
+  (30), `human_session_connect_timeout` (600),
+  `human_session_connect_confirmations` (2), `human_session_ttl` (14400).
 
 ## Test
 - Unit: `pytest -m "not integration"`

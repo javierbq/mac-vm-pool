@@ -30,9 +30,15 @@ def test_list_pool_reports_free_capacity():
     assert listing["capacity_free"] == 1
     assert len(listing["leases"]) == 1
 
+def test_acquire_window_mode_sets_display():
+    svc = make_injected_server()
+    res = svc.acquire_vm("a", display="window")
+    assert res["display"] == "window"
+    assert svc.acquire_vm("b")["display"] == "headless"   # default
+
 def test_start_human_session_orchestrates(monkeypatch):
     svc = make_injected_server()
-    lid = svc.acquire_vm("a")["lease_id"]
+    lid = svc.acquire_vm("a", display="window")["lease_id"]
     ip = svc.vm_status(lid)["ip"]
     vm_name = svc.vm_status(lid)["vm_name"]
     calls = {}
@@ -40,8 +46,6 @@ def test_start_human_session_orchestrates(monkeypatch):
                         lambda *a, **k: calls.__setitem__("deploy", a))
     monkeypatch.setattr(human_session, "launch_app",
                         lambda *a, **k: calls.__setitem__("launch", a))
-    monkeypatch.setattr(human_session, "open_screen_sharing",
-                        lambda *a, **k: calls.__setitem__("open", a))
 
     started = {}
 
@@ -54,21 +58,25 @@ def test_start_human_session_orchestrates(monkeypatch):
     monkeypatch.setattr(human_session, "HumanSessionMonitor", FakeMonitor)
 
     out = svc.start_human_session(lid, app_path="/tmp/MyApp.app")
-    # account-auth URL from config defaults (admin/admin); no legacy VNC password
-    assert out["vnc_url"] == f"vnc://admin:admin@{ip}"
-    assert out["vm_name"] == vm_name and out["ip"] == ip and out["monitoring"] is True
-    assert "deploy" in calls and "launch" in calls and "open" in calls
-    # open_screen_sharing called with (ip, user, password)
-    assert calls["open"][:3] == (ip, "admin", "admin")
+    # built-in window transport: no VNC url, just the window handle
+    assert "vnc_url" not in out
+    assert out["window"] is True and out["vm_name"] == vm_name and out["ip"] == ip
+    assert out["monitoring"] is True
+    assert "deploy" in calls and "launch" in calls
     assert started["started"] is True
+
+def test_start_human_session_requires_window_display():
+    svc = make_injected_server()
+    lid = svc.acquire_vm("a")["lease_id"]        # headless
+    out = svc.start_human_session(lid, bundle_id="com.apple.TextEdit")
+    assert "error" in out and lid not in svc._monitors
 
 def test_start_human_session_skips_deploy_without_app(monkeypatch):
     svc = make_injected_server()
-    lid = svc.acquire_vm("a")["lease_id"]
+    lid = svc.acquire_vm("a", display="window")["lease_id"]
     calls = {}
     monkeypatch.setattr(human_session, "deploy_app",
                         lambda *a, **k: calls.__setitem__("deploy", True))
-    monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor",
                         lambda *a, **k: type("M", (), {"start": lambda self: None})())
     out = svc.start_human_session(lid)
@@ -81,13 +89,12 @@ def test_start_human_session_unknown_lease():
 
 def test_start_human_session_bundle_id_launches_without_deploy(monkeypatch):
     svc = make_injected_server()
-    lid = svc.acquire_vm("a")["lease_id"]
+    lid = svc.acquire_vm("a", display="window")["lease_id"]
     calls = {}
     monkeypatch.setattr(human_session, "deploy_app",
                         lambda *a, **k: calls.__setitem__("deploy", True))
     monkeypatch.setattr(human_session, "launch_bundle",
                         lambda *a, **k: calls.__setitem__("bundle", a))
-    monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor",
                         lambda *a, **k: type("M", (), {"start": lambda self: None,
                                                        "stop": lambda self: None})())
@@ -98,7 +105,7 @@ def test_start_human_session_bundle_id_launches_without_deploy(monkeypatch):
 
 def test_release_vm_stops_and_forgets_monitor(monkeypatch):
     svc = make_injected_server()
-    lid = svc.acquire_vm("a")["lease_id"]
+    lid = svc.acquire_vm("a", display="window")["lease_id"]
     stopped = []
 
     class FakeMonitor:
@@ -108,7 +115,6 @@ def test_release_vm_stops_and_forgets_monitor(monkeypatch):
 
     monkeypatch.setattr(human_session, "deploy_app", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "launch_app", lambda *a, **k: None)
-    monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor", FakeMonitor)
 
     svc.start_human_session(lid, app_path="/tmp/A.app")
@@ -122,7 +128,7 @@ def test_start_human_session_keeps_vm_on_setup_failure(monkeypatch):
     # in and inspect/retry (teardown is explicit; no reaper reclaims it early).
     import pytest
     svc = make_injected_server()
-    lid = svc.acquire_vm("a")["lease_id"]
+    lid = svc.acquire_vm("a", display="window")["lease_id"]
 
     def boom(*a, **k):
         raise RuntimeError("scp failed")

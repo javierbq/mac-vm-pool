@@ -15,7 +15,8 @@ class LeasePool:
         self._leases: dict[str, Lease] = {}
         self._lock = threading.RLock()
 
-    def acquire(self, client_id: str, ttl: int | None = None) -> Lease | None:
+    def acquire(self, client_id: str, ttl: int | None = None,
+                graphics: bool = False) -> Lease | None:
         with self._lock:
             if self.host.capacity() <= 0:
                 return None
@@ -24,7 +25,9 @@ class LeasePool:
             ttl = self.cfg.lease_ttl if ttl is None else ttl
             expires_at = self.clock() + ttl
             self.host.clone(self.cfg.golden_image, name)
-            self.host.boot(name)
+            # graphics=True boots with tart's built-in window (human testing);
+            # default headless for agentic/RPC-driven runs.
+            self.host.boot(name, graphics=graphics)
             ip = self.host.wait_ip(name, timeout=self.cfg.acquire_wait_timeout)
             self.host.wait_agent(name, timeout=self.cfg.acquire_wait_timeout)
             lease = Lease(
@@ -35,6 +38,7 @@ class LeasePool:
                 ip=ip,
                 created_at=now,
                 expires_at=expires_at,
+                display=("window" if graphics else "headless"),
             )
             self._leases[lease.lease_id] = lease
             return lease

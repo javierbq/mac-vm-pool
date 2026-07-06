@@ -98,41 +98,33 @@ ssh -i "$KEY" ... admin@"$IP" 'screencapture -x /tmp/fail.png' || true
 ## Manual / human testing flow
 
 Use this when the human wants to poke at the app themselves with mouse and
-keyboard inside the sandbox, instead of the agent driving.
+keyboard inside the sandbox, instead of the agent driving. It uses **tart's
+built-in window** — the hypervisor renders a native window on this Mac and
+injects real mouse/keyboard. No guest Screen Sharing / VNC / auth is involved.
 
-### 1. Acquire + build + (optionally) locate the .app
-Same as steps 1–2 above: `mcp__mac-vm-pool__acquire_vm` → handle; host-build →
-`$APP`.
+### 1. Acquire in window mode
+Call `mcp__mac-vm-pool__acquire_vm` with `client_id` **and `display="window"`**.
+This boots the VM with tart's built-in UI, so a **native VM window appears on
+this Mac** as it comes up. (Omit `display` for the headless agentic flow above.)
 
-### 2. Hand off to the human
-Call `mcp__mac-vm-pool__start_human_session` with:
+### 2. Build on the host + hand off
+Host-build the app (step 2 above → `$APP`), then call
+`mcp__mac-vm-pool__start_human_session` with:
 - `lease_id` — from the acquire handle,
-- `app_path` — the host path to the built `.app` (the pool installs it into the
-  VM and launches it for you).
+- `app_path` — host path to the built `.app` (installed + launched in the VM), **or**
+- `bundle_id` — to launch an already-installed app (e.g. `com.apple.TextEdit`).
 
-The pool then:
-1. installs + launches the app in the guest,
-2. opens **macOS Screen Sharing** on the host to `vnc://admin:admin@<ip>` using
-   **account auth** (Screen Sharing is enabled with account access in the golden
-   image at bake time — there is no per-session guest reconfiguration).
-
-It returns `{ "vnc_url", "vm_name", "ip", "monitoring": true, "teardown": … }`.
-Tell the human the app is up in the Screen Sharing window and they can drive it
-directly — copy/paste and drag-and-drop work natively over Screen Sharing. If a
-window doesn't appear, run `open "<vnc_url>"` from the return value.
-
-Requires a golden image baked with Screen Sharing enabled (`provision_golden_image`
-/ the baker does this). If Screen Sharing was baked before this was added,
-re-bake once.
+The app then appears in the VM window. Returns
+`{ "vm_name", "ip", "window": true, "monitoring": true, "teardown": … }`. Tell
+the human the app is up in the VM window and they can click/type directly;
+clipboard is shared via the guest agent.
 
 ### 3. Teardown
-Teardown is **primarily explicit**: call `mcp__mac-vm-pool__release_vm` with the
-`lease_id` when done. As a backstop, the monitor auto-releases the VM once a
-**sustained** Screen Sharing session ends (window closed, held past a grace
-period). A failed hand-off does **not** destroy the VM — it's kept so you can
-SSH in and inspect or retry.
-While the human is connected, the lease is kept alive so it is never reaped
-mid-session.
+**Closing the VM window** stops the VM, and the backstop monitor releases the
+lease automatically. Or call `mcp__mac-vm-pool__release_vm` with the `lease_id`
+to tear down immediately. While the window is open the lease is kept alive so it
+is never reaped mid-session. A failed hand-off does **not** destroy the VM — it's
+kept so you can SSH in and inspect or retry.
 
 ## Cap & parallelism
 Apple's Virtualization.framework allows **at most 2 running macOS VMs per Mac**.
