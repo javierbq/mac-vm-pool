@@ -1,14 +1,11 @@
 from __future__ import annotations
 import os
-import secrets
 import shlex
 import subprocess
 import threading
 import time
 
 SSH_OPTS = ["-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"]
-KICKSTART = ("/System/Library/CoreServices/RemoteManagement/"
-             "ARDAgent.app/Contents/Resources/kickstart")
 
 
 def _ssh(ip: str, key: str, remote_cmd: str, runner) -> subprocess.CompletedProcess:
@@ -49,20 +46,12 @@ def launch_bundle(vm_name: str, bundle_id: str, tart_bin: str, runner=subprocess
     )
 
 
-def enable_screen_sharing(ip: str, ssh_key: str, runner=subprocess.run,
-                          password: str | None = None) -> str:
-    password = password or secrets.token_hex(4)   # 8 hex chars (VNC legacy pw max)
-    cmd = (
-        f"echo admin | sudo -S {KICKSTART} -activate -configure -access -on "
-        f"-restart -agent -privs -all -clientopts -setvnclegacy -vnclegacy yes "
-        f"-setvncpw -vncpw {password}"
-    )
-    _ssh(ip, os.path.expanduser(ssh_key), cmd, runner)
-    return password
-
-
-def open_screen_sharing(ip: str, password: str, opener=subprocess.run) -> None:
-    opener(["open", f"vnc://:{password}@{ip}"], check=False)
+def open_screen_sharing(ip: str, user: str, password: str, opener=subprocess.run) -> None:
+    # Account auth (macOS Screen Sharing's default). Screen Sharing is enabled
+    # with account access at bake time, so there is NO per-session guest
+    # reconfiguration here — that (kickstart -restart -agent) was destabilizing
+    # live VMs, and legacy VNC-password auth was rejected by the host.
+    opener(["open", f"vnc://{user}:{password}@{ip}"], check=False)
 
 
 def vnc_connection_probe(ip: str, ssh_key: str, vnc_port: int = 5900,
@@ -73,12 +62,18 @@ def vnc_connection_probe(ip: str, ssh_key: str, vnc_port: int = 5900,
 
 
 class HumanSessionMonitor(threading.Thread):
-    """Watch a guest's VNC connection; call on_close() when the human's Screen
-    Sharing session ends (disconnect held for grace_seconds) or never starts
-    (connect_timeout). Refresh the lease via keepalive() while connected."""
+    """Backstop teardown for a manual session. Explicit release_vm is the primary
+    path; this thread only auto-releases when a SUSTAINED, real Screen Sharing
+    session ends (disconnect held for grace_seconds), or if nobody ever connects
+    (connect_timeout). It refreshes the lease via keepalive() while connected.
+
+    A connection must be observed on `connect_confirmations` consecutive polls
+    before it counts as "connected" — a single-poll blip (e.g. an auth handshake
+    that immediately fails, or a transient TCP probe) must not arm teardown, which
+    was reclaiming VMs ~grace seconds after every failed connection attempt."""
 
     def __init__(self, probe, on_close, *, grace_seconds, connect_timeout,
-                 poll_interval=3.0, keepalive=None,
+                 poll_interval=3.0, keepalive=None, connect_confirmations=2,
                  clock=time.monotonic, sleep=time.sleep):
         super().__init__(daemon=True)
         self._probe = probe
@@ -86,6 +81,7 @@ class HumanSessionMonitor(threading.Thread):
         self._keepalive = keepalive or (lambda: None)
         self._grace = grace_seconds
         self._connect_timeout = connect_timeout
+        self._confirm = max(1, connect_confirmations)
         self._poll = poll_interval
         self._clock = clock
         self._sleep = sleep
@@ -105,11 +101,19 @@ class HumanSessionMonitor(threading.Thread):
             self._on_close()
 
     def _loop(self):
-        # Phase 1: wait for the first connection.
+        # Phase 1: wait for a SUSTAINED first connection (>= _confirm polls in a
+        # row). A momentary blip resets the streak so it can't arm teardown.
         start = self._clock()
-        while not self._stop.is_set() and not self._probe():
-            if self._clock() - start >= self._connect_timeout:
-                return "never_connected"
+        streak = 0
+        while not self._stop.is_set():
+            if self._probe():
+                streak += 1
+                if streak >= self._confirm:
+                    break
+            else:
+                streak = 0
+                if self._clock() - start >= self._connect_timeout:
+                    return "never_connected"
             self._sleep(self._poll)
         if self._stop.is_set():
             return "stopped"

@@ -85,6 +85,17 @@ def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detac
         pubkey = fh.read().strip()
     ssh(f'mkdir -p ~/.ssh && echo "{pubkey}" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys', ip)
 
+    # 5b. enable account-auth Screen Sharing (Remote Management) for `admin`, so
+    # the human-testing hand-off can connect with vnc://admin:<pw>@ip using
+    # macOS Screen Sharing's DEFAULT account auth. Baked ONCE here (stable) —
+    # start_human_session then never reconfigures the guest at session time
+    # (per-session `kickstart -restart -agent` was destabilizing live VMs), and
+    # account auth avoids the legacy-VNC-password mode the host rejects. The
+    # -restart -agent here is safe: the build VM is shut down right after.
+    ssh("echo admin | sudo -S /System/Library/CoreServices/RemoteManagement/"
+        "ARDAgent.app/Contents/Resources/kickstart -activate -configure -access "
+        "-on -users admin -privs -all -restart -agent", ip)
+
     # 6. smoke test: open an app IN THE GUEST, type into it, and query the
     # accessibility tree — all via the guest agent RPC (tart exec/input/accessibility).
     sh([cfg.tart_bin, "exec", BUILD_VM, "open", "-a", "TextEdit"], check=False)

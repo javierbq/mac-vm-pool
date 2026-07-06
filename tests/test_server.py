@@ -40,8 +40,6 @@ def test_start_human_session_orchestrates(monkeypatch):
                         lambda *a, **k: calls.__setitem__("deploy", a))
     monkeypatch.setattr(human_session, "launch_app",
                         lambda *a, **k: calls.__setitem__("launch", a))
-    monkeypatch.setattr(human_session, "enable_screen_sharing",
-                        lambda *a, **k: "pw012345")
     monkeypatch.setattr(human_session, "open_screen_sharing",
                         lambda *a, **k: calls.__setitem__("open", a))
 
@@ -56,9 +54,12 @@ def test_start_human_session_orchestrates(monkeypatch):
     monkeypatch.setattr(human_session, "HumanSessionMonitor", FakeMonitor)
 
     out = svc.start_human_session(lid, app_path="/tmp/MyApp.app")
-    assert out == {"vnc_url": f"vnc://:pw012345@{ip}",
-                   "vm_name": vm_name, "ip": ip, "monitoring": True}
+    # account-auth URL from config defaults (admin/admin); no legacy VNC password
+    assert out["vnc_url"] == f"vnc://admin:admin@{ip}"
+    assert out["vm_name"] == vm_name and out["ip"] == ip and out["monitoring"] is True
     assert "deploy" in calls and "launch" in calls and "open" in calls
+    # open_screen_sharing called with (ip, user, password)
+    assert calls["open"][:3] == (ip, "admin", "admin")
     assert started["started"] is True
 
 def test_start_human_session_skips_deploy_without_app(monkeypatch):
@@ -67,8 +68,6 @@ def test_start_human_session_skips_deploy_without_app(monkeypatch):
     calls = {}
     monkeypatch.setattr(human_session, "deploy_app",
                         lambda *a, **k: calls.__setitem__("deploy", True))
-    monkeypatch.setattr(human_session, "enable_screen_sharing",
-                        lambda *a, **k: "pw012345")
     monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor",
                         lambda *a, **k: type("M", (), {"start": lambda self: None})())
@@ -88,7 +87,6 @@ def test_start_human_session_bundle_id_launches_without_deploy(monkeypatch):
                         lambda *a, **k: calls.__setitem__("deploy", True))
     monkeypatch.setattr(human_session, "launch_bundle",
                         lambda *a, **k: calls.__setitem__("bundle", a))
-    monkeypatch.setattr(human_session, "enable_screen_sharing", lambda *a, **k: "pw")
     monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor",
                         lambda *a, **k: type("M", (), {"start": lambda self: None,
@@ -110,7 +108,6 @@ def test_release_vm_stops_and_forgets_monitor(monkeypatch):
 
     monkeypatch.setattr(human_session, "deploy_app", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "launch_app", lambda *a, **k: None)
-    monkeypatch.setattr(human_session, "enable_screen_sharing", lambda *a, **k: "pw")
     monkeypatch.setattr(human_session, "open_screen_sharing", lambda *a, **k: None)
     monkeypatch.setattr(human_session, "HumanSessionMonitor", FakeMonitor)
 
@@ -120,7 +117,9 @@ def test_release_vm_stops_and_forgets_monitor(monkeypatch):
     assert stopped == [True]
     assert lid not in svc._monitors
 
-def test_start_human_session_releases_vm_on_setup_failure(monkeypatch):
+def test_start_human_session_keeps_vm_on_setup_failure(monkeypatch):
+    # A failed hand-off must NOT destroy the VM — leave it so the human can SSH
+    # in and inspect/retry (teardown is explicit; no reaper reclaims it early).
     import pytest
     svc = make_injected_server()
     lid = svc.acquire_vm("a")["lease_id"]
@@ -131,5 +130,5 @@ def test_start_human_session_releases_vm_on_setup_failure(monkeypatch):
     monkeypatch.setattr(human_session, "deploy_app", boom)
     with pytest.raises(RuntimeError):
         svc.start_human_session(lid, app_path="/tmp/A.app")
-    assert svc.vm_status(lid) == {"found": False}   # VM released, slot freed
-    assert lid not in svc._monitors
+    assert svc.vm_status(lid)["lease_id"] == lid   # VM kept for inspection
+    assert lid not in svc._monitors                # no monitor was started

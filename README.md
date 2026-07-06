@@ -62,15 +62,22 @@ running.
 - `vm_status(lease_id)` / `list_pool()` → introspection.
 - `provision_golden_image()` → (re)bake the golden image.
 - `start_human_session(lease_id, app_path=None, bundle_id=None)` → **hands the VM
-  to a human**: installs+launches `app_path` (if given), enables Screen Sharing in
-  the guest per-session (via `kickstart`, throwaway VNC password — no golden-image
-  re-bake), opens `vnc://` on the host, and starts a background monitor that
-  **auto-releases the VM when the Screen Sharing session closes** (after
-  `human_session_grace_seconds`). The lease is kept alive while connected, so a
-  long manual session is never reaped. Returns `{vnc_url, vm_name, ip, monitoring}`.
-  Human-session knobs (env-overridable via `MVP_*`): `human_session_grace_seconds`
-  (30), `human_session_connect_timeout` (600), `human_session_ttl` (14400),
-  `vnc_port` (5900).
+  to a human**: installs+launches `app_path` (if given), then opens **macOS Screen
+  Sharing** to `vnc://admin:admin@<ip>` using **account auth**. Screen Sharing is
+  enabled with account access in the golden image **at bake time**, so there is no
+  per-session guest reconfiguration (per-session `kickstart -restart -agent` was
+  destabilizing live VMs, and legacy VNC-password auth was rejected by the host).
+  Teardown is **primarily explicit** (`release_vm`); a background monitor is a
+  backstop that auto-releases only after a **sustained** session ends
+  (`human_session_connect_confirmations` polls to confirm a real connection, then
+  a `human_session_grace_seconds` disconnect window). A failed hand-off **keeps**
+  the VM for inspection. The lease is kept alive while connected. Returns
+  `{vnc_url, vm_name, ip, monitoring, teardown}`. Requires re-baking the golden
+  image after adding this (for the baked Screen Sharing). Human-session knobs
+  (env-overridable via `MVP_*`): `human_session_grace_seconds` (30),
+  `human_session_connect_timeout` (600), `human_session_connect_confirmations`
+  (2), `human_session_ttl` (14400), `vnc_port` (5900), `vnc_user`/`vnc_password`
+  (admin/admin).
 
 ## Test
 - Unit: `pytest -m "not integration"`

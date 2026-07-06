@@ -13,8 +13,11 @@ def test_human_session_defaults():
     cfg = Config.load(None)
     assert cfg.human_session_grace_seconds == 30
     assert cfg.human_session_connect_timeout == 600
+    assert cfg.human_session_connect_confirmations == 2
     assert cfg.human_session_ttl == 14400
     assert cfg.vnc_port == 5900
+    assert cfg.vnc_user == "admin"
+    assert cfg.vnc_password == "admin"
 
 def test_env_override(monkeypatch):
     monkeypatch.setenv("MVP_MAX_VMS_PER_HOST", "1")
