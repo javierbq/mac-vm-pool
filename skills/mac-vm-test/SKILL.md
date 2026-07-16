@@ -79,8 +79,14 @@ by role/title/identifier when you can.
 ```
 
 ### 6. Observe & assert
+Capture the screen through the **guest agent** (`tart exec`), NOT over SSH. The
+baker grants Screen Recording (`kTCCServiceScreenCapture`) to the guest-agent
+binary, so a capture whose responsible process is the agent runs silently. A
+capture invoked over SSH is attributed to `com.apple.sshd-session`, which has no
+grant, so on macOS 15+/26 it raises an un-dismissable "bypass the private window
+picker" consent overlay that then contaminates the screenshot.
 ```bash
-ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@"$IP" 'screencapture -x /tmp/shot.png'
+"$MVP_TART_BIN" exec "$VM" screencapture -x /tmp/shot.png   # runs as the granted agent → no prompt
 scp -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null admin@"$IP":/tmp/shot.png /tmp/shot.png
 ```
 Assert on the accessibility tree (`accessibility find` returns element state,
@@ -92,7 +98,7 @@ Release the VM via `mcp__mac-vm-pool__release_vm` with the `lease_id`, no matter
 what. On failure, before releasing, capture diagnostics:
 ```bash
 "$MVP_TART_BIN" accessibility find "$VM" --app com.example.MyApp --max-results 100 > /tmp/ax-dump.txt 2>&1 || true
-ssh -i "$KEY" ... admin@"$IP" 'screencapture -x /tmp/fail.png' || true
+"$MVP_TART_BIN" exec "$VM" screencapture -x /tmp/fail.png || true   # via the agent (see §6), not ssh
 ```
 
 ## Manual / human testing flow
