@@ -64,7 +64,13 @@ def bake_golden_image(cfg: Config, runner=subprocess.run, launcher=_launch_detac
         "echo admin | sudo -S rm -f \"$T\"; echo admin | sudo -S cp /tmp/tga-new \"$T\"; "
         "echo admin | sudo -S chmod +x \"$T\"; launchctl bootstrap gui/$UID_NUM $P", ip)
 
-    # 4. grant TCC (SIP off in cirruslabs images)
+    # 4. grant TCC (SIP off in cirruslabs images).
+    # NOTE the ScreenCapture grant is keyed to the guest-AGENT binary, so a
+    # screenshot is only silent when its responsible process is the agent —
+    # i.e. captured via `tart exec <vm> screencapture`. A capture invoked over
+    # SSH is attributed to com.apple.sshd-session (ungranted) and raises an
+    # un-dismissable "bypass the private window picker" consent on macOS 15+/26.
+    # Skills must screenshot via `tart exec`, not `ssh screencapture`.
     ssh('DB="/Library/Application Support/com.apple.TCC/TCC.db"; T=$(readlink -f /opt/homebrew/bin/tart-guest-agent); '
         'for SVC in kTCCServiceAccessibility kTCCServiceScreenCapture kTCCServicePostEvent; do '
         'echo admin | sudo -S sqlite3 "$DB" "INSERT OR REPLACE INTO access '
